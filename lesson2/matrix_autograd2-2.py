@@ -1,4 +1,4 @@
-# 引用 pytorch
+# lesson2.2
 import torch
 import matplotlib.pyplot as plt
 
