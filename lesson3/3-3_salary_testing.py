@@ -2,6 +2,7 @@ import pandas
 import torch
 import gzip
 from torch import nn
+import matplotlib.pyplot as plt
 
 torch.set_default_device("mps")
 salary_data_url = 'https://github.com/303248153/303248153.github.io/blob/master/ml-03/salary.csv'
@@ -44,23 +45,34 @@ loss_function = nn.MSELoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=0.0000001)
 batch_capacity = 100
 
+training_accuracy_history = []
+validating_accuracy_history = []
+
 print(
     f'training set x length: {len(training_set_x)}, training set y length: {len(training_set_y)}, validating set x length: {len(validating_set_x)}, validating set y length: {len(validating_set_y)}, testing set x length: {len(testing_set_x)}, testing set y length: {len(testing_set_y)}')
 
-for epoch in range(1, 100):
+for epoch in range(1, 1000):
     print(f'epoch: {epoch}')
 
     model.train()
-
+    training_accuracy = 0
     for batch in range(0, training_set_x.shape[0], batch_capacity):
-        predicted = model(training_set_x[batch:batch + batch_capacity])
-        loss = loss_function(predicted, training_set_y[batch:batch + batch_capacity])
+        training_batch_x = training_set_x[batch:batch + batch_capacity]
+        training_batch_y = training_set_y[batch:batch + batch_capacity]
+        predicted = model(training_batch_x)
+        loss = loss_function(predicted, training_batch_y)
         # print(
         #     f'training epoch: {epoch}, x: {training_set_x[batch:batch + batch_capacity]}, y: {training_set_y[batch:batch + batch_capacity]}, predicted: {predicted}, loss: {loss.item()}')
 
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
+        with torch.no_grad():
+            training_accuracy += 1 - ((training_batch_y - predicted).abs() / training_batch_y).mean().item()
+
+    training_accuracy /= (training_set_x.shape[0] / batch_capacity)
+    training_accuracy_history.append(training_accuracy)
+    print(f'training accuracy: {training_accuracy}')
 
     model.eval()
     validating_accuracy = 0
@@ -70,25 +82,35 @@ for epoch in range(1, 100):
         validating_batch_x = validating_set_x[validating_batch:validating_batch + batch_capacity]
         validating_batch_y = validating_set_y[validating_batch:validating_batch + batch_capacity]
         vp = model(validating_batch_x)
-        batch_accuracy = 1 - ((validating_batch_y - vp).abs() / validating_batch_y).mean()
+        batch_accuracy = 1 - ((validating_batch_y - vp).abs() / validating_batch_y).mean().item()
         validating_accuracy += batch_accuracy
         validating_num_batches += 1
     validating_accuracy /= validating_num_batches
+    validating_accuracy_history.append(validating_accuracy)
     print(f'validating accuracy: {validating_accuracy}')
     if validating_accuracy > 0.99:
         break
 
-testing_accuracy = 0
+testing_accuracy = 0.0
 testing_num_batches = 0
 
 for testing_batch in range(0, testing_set_x.shape[0], batch_capacity):
     testing_batch_x = testing_set_x[testing_batch:testing_batch + batch_capacity]
     testing_batch_y = testing_set_y[testing_batch:testing_batch + batch_capacity]
     predicted = model(testing_batch_x)
-    batch_accuracy = 1 - ((testing_batch_y - predicted).abs() / testing_batch_y).mean()
+    batch_accuracy = 1 - ((testing_batch_y - predicted).abs() / testing_batch_y).mean().item()
+    testing_accuracy += batch_accuracy
     testing_num_batches += 1
 testing_accuracy /= testing_num_batches
 print(f'testing accuracy: {testing_accuracy}')
+print(training_accuracy_history)
+print(validating_accuracy_history)
+
+plt.plot(training_accuracy_history, label="traning")
+plt.plot(validating_accuracy_history, label="validing")
+plt.ylim(0, 1)
+plt.legend()
+plt.show()
 
 torch.save(model.state_dict(), gzip.GzipFile("salary_model.pt.gz", "wb"))
 
