@@ -1,3 +1,7 @@
+import os
+import itertools
+import sys
+
 import pandas
 import torch
 import gzip
@@ -6,6 +10,8 @@ import matplotlib.pyplot as plt
 
 torch.set_default_device("mps")
 salary_data_url = 'https://github.com/303248153/303248153.github.io/blob/master/ml-03/salary.csv'
+
+torch.random.manual_seed(0)
 
 
 class SalaryModel(nn.Module):
@@ -22,105 +28,165 @@ class SalaryModel(nn.Module):
         return y
 
 
-torch.random.manual_seed(0)
+def save_tensor(tensor, filename):
+    with gzip.open(filename, 'wb') as f:
+        torch.save(tensor, f)
 
-df = pandas.read_csv('salary.csv')
 
-dataset_tensor = torch.tensor(df.values, dtype=torch.float32)
-# dataset_tensor = dataset_tensor[0:100]
-random_indices = torch.randperm(dataset_tensor.shape[0])
-training_indices = random_indices[:int(dataset_tensor.shape[0] * 0.6)]
-validating_indices = random_indices[int(dataset_tensor.shape[0] * 0.6):int(dataset_tensor.shape[0] * 0.8)]
-testing_indices = random_indices[int(dataset_tensor.shape[0] * 0.8):]
+def load_tensor(filename):
+    with gzip.open(filename, 'rb') as f:
+        return torch.load(f)
 
-training_set_x = dataset_tensor[training_indices][:, :-1]
-training_set_y = dataset_tensor[training_indices][:, -1:]
-validating_set_x = dataset_tensor[validating_indices][:, :-1]
-validating_set_y = dataset_tensor[validating_indices][:, -1:]
-testing_set_x = dataset_tensor[testing_indices][:, :-1]
-testing_set_y = dataset_tensor[testing_indices][:, -1:]
 
-model = SalaryModel()
-loss_function = nn.MSELoss()
-optimizer = torch.optim.SGD(model.parameters(), lr=0.0000001)
-batch_capacity = 100
+def prepare(batch_size=2000, salary_path="data/salary.csv"):
+    if not os.path.isdir("data"):
+        os.makedirs("data")
 
-training_accuracy_history = []
-validating_accuracy_history = []
+    for batch, df in enumerate(pandas.read_csv(salary_path, chunksize=2000)):
+        dataset_tensor = torch.tensor(df.values, dtype=torch.float32)
 
-print(
-    f'training set x length: {len(training_set_x)}, training set y length: {len(training_set_y)}, validating set x length: {len(validating_set_x)}, validating set y length: {len(validating_set_y)}, testing set x length: {len(testing_set_x)}, testing set y length: {len(testing_set_y)}')
+        random_indices = torch.randperm(dataset_tensor.shape[0])
+        training_indices = random_indices[:int(dataset_tensor.shape[0] * 0.6)]
+        validating_indices = random_indices[int(dataset_tensor.shape[0] * 0.6):int(dataset_tensor.shape[0] * 0.8)]
+        testing_indices = random_indices[int(dataset_tensor.shape[0] * 0.8):]
 
-for epoch in range(1, 1000):
-    print(f'epoch: {epoch}')
+        training_set = dataset_tensor[training_indices]
+        validating_set = dataset_tensor[validating_indices]
+        testing_set = dataset_tensor[testing_indices]
 
-    model.train()
-    training_accuracy = 0
-    for batch in range(0, training_set_x.shape[0], batch_capacity):
-        training_batch_x = training_set_x[batch:batch + batch_capacity]
-        training_batch_y = training_set_y[batch:batch + batch_capacity]
-        predicted = model(training_batch_x)
-        loss = loss_function(predicted, training_batch_y)
-        # print(
-        #     f'training epoch: {epoch}, x: {training_set_x[batch:batch + batch_capacity]}, y: {training_set_y[batch:batch + batch_capacity]}, predicted: {predicted}, loss: {loss.item()}')
+        save_tensor(training_set, f"data/training_set_{batch}.pt.gz")
+        save_tensor(validating_set, f"data/validating_set_{batch}.pt.gz")
+        save_tensor(testing_set, f"data/testing_set_{batch}.pt.gz")
 
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
-        with torch.no_grad():
-            training_accuracy += 1 - ((training_batch_y - predicted).abs() / training_batch_y).mean().item()
+        print(f"batch {batch} saved")
 
-    training_accuracy /= (training_set_x.shape[0] / batch_capacity)
-    training_accuracy_history.append(training_accuracy)
-    print(f'training accuracy: {training_accuracy}')
 
+def train():
+    model = SalaryModel()
+    loss_function = nn.MSELoss()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0000001)
+
+    training_accuracy_history = []
+    validating_accuracy_history = []
+
+    validating_accuracy_highest = 0
+    validating_accuracy_highest_epoch = 0
+
+    def read_batcher(path):
+        for batch in itertools.count():
+            filepath = f"{path}_{batch}.pt.gz"
+            if not os.path.exists(filepath):
+                break
+            yield load_tensor(filepath)
+
+    def calc_accuracy(predicted, y):
+        return 1 - ((y - predicted).abs() / y.abs()).mean().item()
+
+    for epoch in range(1, 1000):
+        print(f'epoch: {epoch}')
+
+        model.train()
+        training_accuracy_list = []
+        for training_set in read_batcher('data/training_set'):
+            # Split the training set into batches of 100, Better for model generalization
+            for index in range(0, training_set.shape[0], 100):
+                training_batch_x = training_set[index:index + 100, :-1]
+                training_batch_y = training_set[index:index + 100, -1:]
+                predicted = model(training_batch_x)
+                loss = loss_function(predicted, training_batch_y)
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
+                with torch.no_grad():
+                    training_accuracy_list.append(calc_accuracy(predicted, training_batch_y))
+        training_accuracy = sum(training_accuracy_list) / len(training_accuracy_list)
+        training_accuracy_history.append(training_accuracy)
+        print(f'training accuracy: {training_accuracy}')
+
+        model.eval()
+        validating_accuracy_list = []
+        for validating_set in read_batcher('data/validating_set'):
+            for validating_batch in range(0, validating_set.shape[0], 100):
+                validating_batch_x = validating_set[validating_batch:validating_batch + 100, :-1]
+                validating_batch_y = validating_set[validating_batch:validating_batch + 100, -1:]
+                predicted = model(validating_batch_x)
+                validating_accuracy_list.append(calc_accuracy(predicted, validating_batch_y))
+        validating_accuracy = sum(validating_accuracy_list) / len(validating_accuracy_list)
+        validating_accuracy_history.append(validating_accuracy)
+        print(f'validating accuracy: {validating_accuracy}')
+
+        if validating_accuracy > validating_accuracy_highest:
+            validating_accuracy_highest = validating_accuracy
+            validating_accuracy_highest_epoch = epoch
+            save_tensor(model.state_dict(), 'data/salary_model.pth.gz')
+            print(f'saved model at epoch {epoch}')
+        elif epoch - validating_accuracy_highest_epoch > 100:
+            print(f'early stop at epoch {epoch}')
+            break
+
+    print(f'validating accuracy highest: {validating_accuracy_highest} at epoch {validating_accuracy_highest_epoch}')
+
+    test_model = SalaryModel()
+    test_model.load_state_dict(load_tensor('data/salary_model.pth.gz'))
+
+    testing_accuracy_list = []
+
+    for testing_batches in read_batcher('data/testing_set'):
+        predicted = test_model(torch.tensor(testing_batches[:, :-1]))
+        testing_accuracy_list.append(calc_accuracy(predicted, testing_batches[:, -1:]))
+    testing_accuracy = sum(testing_accuracy_list) / len(testing_accuracy_list)
+    print(f'testing accuracy: {testing_accuracy}')
+    plt.plot(training_accuracy_history, label='training accuracy')
+    plt.plot(validating_accuracy_history, label='validating accuracy')
+    plt.legend()
+    plt.show()
+
+
+def eval_model():
+    parameters = [
+        "Age",
+        "Gender (0: Male, 1: Female)",
+        "Years of work experience",
+        "Java Skill (0 ~ 5)",
+        "NET Skill (0 ~ 5)",
+        "JS Skill (0 ~ 5)",
+        "CSS Skill (0 ~ 5)",
+        "HTML Skill (0 ~ 5)"
+    ]
+
+    model = SalaryModel()
+    model.load_state_dict(load_tensor('data/salary_model.pth.gz'))
     model.eval()
-    validating_accuracy = 0
-    validating_num_batches = 0
+    while True:
+        try:
+            print("enter input:")
+            x = torch.tensor([int(input(f'Your {parameter}: ')) for parameter in parameters],
+                             dtype=torch.float32)
+            x = x.view(1, len(parameters))
+            y = model(x)
+            print(y[0, 0].item())
+        except Exception as e:
+            print("error:", e)
 
-    for validating_batch in range(0, validating_set_x.shape[0], batch_capacity):
-        validating_batch_x = validating_set_x[validating_batch:validating_batch + batch_capacity]
-        validating_batch_y = validating_set_y[validating_batch:validating_batch + batch_capacity]
-        vp = model(validating_batch_x)
-        batch_accuracy = 1 - ((validating_batch_y - vp).abs() / validating_batch_y).mean().item()
-        validating_accuracy += batch_accuracy
-        validating_num_batches += 1
-    validating_accuracy /= validating_num_batches
-    validating_accuracy_history.append(validating_accuracy)
-    print(f'validating accuracy: {validating_accuracy}')
-    if validating_accuracy > 0.99:
-        break
 
-testing_accuracy = 0.0
-testing_num_batches = 0
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python 3-3_salary_testing.py prepare|train|eval")
+        exit(1)
 
-for testing_batch in range(0, testing_set_x.shape[0], batch_capacity):
-    testing_batch_x = testing_set_x[testing_batch:testing_batch + batch_capacity]
-    testing_batch_y = testing_set_y[testing_batch:testing_batch + batch_capacity]
-    predicted = model(testing_batch_x)
-    batch_accuracy = 1 - ((testing_batch_y - predicted).abs() / testing_batch_y).mean().item()
-    testing_accuracy += batch_accuracy
-    testing_num_batches += 1
-testing_accuracy /= testing_num_batches
-print(f'testing accuracy: {testing_accuracy}')
-print(training_accuracy_history)
-print(validating_accuracy_history)
+    torch.set_default_device("mps")
 
-plt.plot(training_accuracy_history, label="traning")
-plt.plot(validating_accuracy_history, label="validing")
-plt.ylim(0, 1)
-plt.legend()
-plt.show()
+    for operation in sys.argv[1:]:
+        if operation == 'prepare':
+            prepare()
+        elif operation == 'train':
+            train()
+        elif operation == 'eval':
+            eval_model()
+        else:
+            print(f"Unknown operation: {operation}")
+            exit(1)
 
-torch.save(model.state_dict(), gzip.GzipFile("salary_model.pt.gz", "wb"))
 
-# torch.save(model.state_dict(), 'salary_model.pth')
-
-# while True:
-#     try:
-#         print("enter input:")
-#         r = list(map(float, input().split(",")))
-#         x = torch.tensor(r).view(1, len(r))
-#         print(model(x)[0, 0].item())
-#     except Exception as e:
-#         print("error:", e)
+if __name__ == '__main__':
+    main()
