@@ -44,6 +44,8 @@ def prepare(batch_size=2000, salary_path="data/salary.csv"):
 
     for batch, df in enumerate(pandas.read_csv(salary_path, chunksize=2000)):
         dataset_tensor = torch.tensor(df.values, dtype=torch.float32)
+        # Normalize the data
+        dataset_tensor *= torch.tensor([0.01, 1, 0.01, 0.2, 0.2, 0.2, 0.2, 0.2, 0.0001])
 
         random_indices = torch.randperm(dataset_tensor.shape[0])
         training_indices = random_indices[:int(dataset_tensor.shape[0] * 0.6)]
@@ -64,7 +66,7 @@ def prepare(batch_size=2000, salary_path="data/salary.csv"):
 def train():
     model = SalaryModel()
     loss_function = nn.MSELoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.0000001)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
 
     training_accuracy_history = []
     validating_accuracy_history = []
@@ -162,6 +164,7 @@ def eval_model():
             print("enter input:")
             x = torch.tensor([int(input(f'Your {parameter}: ')) for parameter in parameters],
                              dtype=torch.float32)
+            x *= torch.tensor([0.01, 1, 0.01, 0.2, 0.2, 0.2, 0.2, 0.2])
             x = x.view(1, len(parameters))
             y = model(x)
             print(y[0, 0].item())
