@@ -46,7 +46,7 @@ def prepare(batch_size=2000, salary_path="data/salary.csv"):
         os.makedirs("data")
 
     for batch, df in enumerate(pandas.read_csv(salary_path, chunksize=2000)):
-        dataset_tensor = torch.tensor(df.values, dtype=torch.float32)
+        dataset_tensor = torch.tensor(df.values, dtype=torch.float)
         # Normalize the data
         dataset_tensor *= torch.tensor([0.01, 1, 0.01, 0.2, 0.2, 0.2, 0.2, 0.2, 0.0001])
 
@@ -168,7 +168,7 @@ def eval_model():
         try:
             print("enter input:")
             x = torch.tensor([int(input(f'Your {parameter}: ')) for parameter in parameters],
-                             dtype=torch.float32)
+                             dtype=torch.float)
             x *= torch.tensor([0.01, 1, 0.01, 0.2, 0.2, 0.2, 0.2, 0.2])
             x = x.view(1, len(parameters))
             y = model(x)

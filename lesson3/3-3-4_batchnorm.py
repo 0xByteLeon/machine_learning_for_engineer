@@ -41,7 +41,7 @@ def prepare(batch_size=2000, salary_path="data/salary.csv"):
         os.makedirs("data")
 
     for batch, df in enumerate(pandas.read_csv(salary_path, chunksize=2000)):
-        dataset_tensor = torch.tensor(df.values, dtype=torch.float32)
+        dataset_tensor = torch.tensor(df.values, dtype=torch.float)
         # Normalize the data
         dataset_tensor *= torch.tensor([0.01, 1, 0.01, 0.2, 0.2, 0.2, 0.2, 0.2, 0.0001])
 
@@ -80,7 +80,7 @@ def train():
             yield load_tensor(filepath)
 
     def calc_accuracy(predicted, y):
-        return 1 - ((y - predicted).abs() / y.abs()).mean().item()
+        return max(0, 1 - ((y - predicted).abs() / y.abs()).mean().item())
 
     for epoch in range(1, 1000):
         print(f'epoch: {epoch}')
@@ -105,12 +105,9 @@ def train():
 
         model.eval()
         validating_accuracy_list = []
-        for validating_set in read_batcher('data/validating_set'):
-            for validating_batch in range(0, validating_set.shape[0], 100):
-                validating_batch_x = validating_set[validating_batch:validating_batch + 100, :-1]
-                validating_batch_y = validating_set[validating_batch:validating_batch + 100, -1:]
-                predicted = model(validating_batch_x)
-                validating_accuracy_list.append(calc_accuracy(predicted, validating_batch_y))
+        for batch in read_batcher("data/validating_set"):
+            validating_accuracy_list.append(calc_accuracy(batch[:, -1:], model(batch[:, :-1])))
+
         validating_accuracy = sum(validating_accuracy_list) / len(validating_accuracy_list)
         validating_accuracy_history.append(validating_accuracy)
         print(f'validating accuracy: {validating_accuracy}')
@@ -161,7 +158,7 @@ def eval_model():
         try:
             print("enter input:")
             x = torch.tensor([int(input(f'Your {parameter}: ')) for parameter in parameters],
-                             dtype=torch.float32)
+                             dtype=torch.float)
             x *= torch.tensor([0.01, 1, 0.01, 0.2, 0.2, 0.2, 0.2, 0.2])
             x = x.view(1, len(parameters))
             y = model(x)
